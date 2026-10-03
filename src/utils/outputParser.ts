@@ -3,6 +3,10 @@ import { Logger } from './logger.js';
 
 export function parseCodexOutput(rawOutput: string): CodexOutput {
   const lines = rawOutput.split('\n');
+  const bannerPattern = /^OpenAI Codex(?:\s+v\S+)?(?:\s+\(research preview\))?$/;
+  const hasLegacyStructure = lines.some(line =>
+    bannerPattern.test(line.trim()) || line.trim() === '--------'
+  );
   const timestamps: string[] = [];
   let metadata: any = {};
   let userInstructions = '';
@@ -17,38 +21,47 @@ export function parseCodexOutput(rawOutput: string): CodexOutput {
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+
+    // Current Codex CLI stdout contains only the final message.
+    if (!hasLegacyStructure) {
+      responseLines.push(line);
+      continue;
+    }
+
+    const trimmedLine = line.trim();
+    const sectionLine = trimmedLine.replace(/^\[[^\]]+\]\s*/, '');
     
     // Extract timestamps
-    const timestampMatch = line.match(/^\[([^\]]+)\]/);
+    const timestampMatch = trimmedLine.match(/^\[([^\]]+)\]/);
     if (timestampMatch) {
       timestamps.push(timestampMatch[1]);
     }
     
     // Extract tokens used
-    const tokensMatch = line.match(/tokens used:\s*(\d+)/);
+    const tokensMatch = sectionLine.match(/^tokens used:\s*(\d+)$/);
     if (tokensMatch) {
       tokensUsed = parseInt(tokensMatch[1], 10);
       continue;
     }
     
     // Identify sections
-    if (line.includes('OpenAI Codex')) {
+    if (bannerPattern.test(sectionLine)) {
       currentSection = 'header';
       continue;
-    } else if (line.startsWith('--------')) {
+    } else if (sectionLine === '--------') {
       if (currentSection === 'header') {
         currentSection = 'metadata';
       } else if (currentSection === 'metadata') {
         currentSection = 'content';
       }
       continue;
-    } else if (line.includes('User instructions:')) {
+    } else if (sectionLine === 'User instructions:') {
       currentSection = 'userInstructions';
       continue;
-    } else if (line.includes('thinking')) {
+    } else if (sectionLine === 'thinking') {
       currentSection = 'thinking';
       continue;
-    } else if (line.includes('codex')) {
+    } else if (sectionLine === 'codex') {
       currentSection = 'response';
       continue;
     }
@@ -61,17 +74,17 @@ export function parseCodexOutput(rawOutput: string): CodexOutput {
         }
         break;
       case 'userInstructions':
-        if (line.trim() && !line.includes('User instructions:')) {
+        if (line.trim()) {
           userInstructions += line + '\n';
         }
         break;
       case 'thinking':
-        if (line.trim() && !line.includes('thinking')) {
+        if (line.trim()) {
           thinkingLines.push(line);
         }
         break;
       case 'response':
-        if (line.trim() && !line.includes('codex') && !line.includes('tokens used:')) {
+        if (line.trim()) {
           responseLines.push(line);
         }
         break;
